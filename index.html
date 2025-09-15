@@ -300,30 +300,46 @@
   }
   
   // --- Lógica de Calibración ---
-  function calibrateGaze() {
-    calibrationStep = 0;
-    showInfo("Comenzando calibración. Mira la esquina superior izquierda (↑↖️) y haz clic en el botón.");
-  }
+  const CALIBRATION_MESSAGES = [
+    "Mira la esquina superior izquierda (↑↖️)",
+    "Ahora mira la esquina superior derecha (↗️)",
+    "Ahora mira la esquina inferior derecha (↘️)",
+    "Ahora mira la esquina inferior izquierda (↙️)",
+    "🎉 ¡Calibración completa! Ya puedes iniciar la brocha."
+  ];
 
-  function processCalibration() {
+  function calibrateAndCenter() {
+    if (!isFaceDetected || irisN.x === null) {
+      showErr("Aún no se detecta tu mirada. Espera un segundo.");
+      return;
+    }
+    
     if (calibrationStep === 0) {
       calibrationPoints.tl = {...irisN};
       calibrationStep = 1;
-      showInfo("Ahora mira la esquina superior derecha (↗️) y haz clic.");
+      btnCalibrate.textContent = "Calibrar | Capturar Punto 2";
+      showInfo(CALIBRATION_MESSAGES[calibrationStep]);
     } else if (calibrationStep === 1) {
       calibrationPoints.tr = {...irisN};
       calibrationStep = 2;
-      showInfo("Ahora mira la esquina inferior derecha (↘️) y haz clic.");
+      btnCalibrate.textContent = "Calibrar | Capturar Punto 3";
+      showInfo(CALIBRATION_MESSAGES[calibrationStep]);
     } else if (calibrationStep === 2) {
       calibrationPoints.br = {...irisN};
       calibrationStep = 3;
-      showInfo("Ahora mira la esquina inferior izquierda (↙️) y haz clic.");
+      btnCalibrate.textContent = "Calibrar | Capturar Punto 4";
+      showInfo(CALIBRATION_MESSAGES[calibrationStep]);
     } else if (calibrationStep === 3) {
       calibrationPoints.bl = {...irisN};
       calibrationStep = 0;
+      btnCalibrate.textContent = "3. Calibrar Mirada";
       calculateGazeScales();
-      showInfo("🎉 ¡Calibración completa! Ya puedes iniciar la brocha.");
+      showInfo(CALIBRATION_MESSAGES[4]);
     }
+
+    // Centrar el cursor después de cada captura
+    smoothedGaze.x = W / 2;
+    smoothedGaze.y = H / 2;
   }
 
   function calculateGazeScales() {
@@ -364,7 +380,7 @@
   // --- Eventos de Botones ---
   btnStartCam.onclick = startCamera;
   btnCenterGaze.onclick = centerGaze;
-  btnCalibrate.onclick = processCalibration;
+  btnCalibrate.onclick = calibrateAndCenter;
   btnToggleMode.onclick = toggleGazeMode;
   btnStartBrush.onclick = () => {
     mode = 'brush';
