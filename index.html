@@ -293,17 +293,19 @@
       showInfo("🎯 Mirada centrada. ¡Ya puedes iniciar la brocha!");
   }
 
-  function toggleGazeMode() {
-    if (gazeMode === 'head') {
-        gazeMode = 'eye';
-        btnToggleMode.textContent = "3. Modo Ojo";
-        showInfo("Modo Ojo activado. Fija tu cabeza y mueve solo tus ojos.");
-    } else {
-        gazeMode = 'head';
-        btnToggleMode.textContent = "3. Modo Cabeza";
-        showInfo("Modo Cabeza activado. Mueve tu cabeza para navegar.");
-    }
+ function toggleGazeMode() {
+  if (gazeMode === 'head') {
+      gazeMode = 'eye';
+      btnToggleMode.textContent = "3. Modo Ojo";
+      CFG.invertGazeY = false; // <-- This is the change
+      showInfo("Modo Ojo activado. Fija tu cabeza y mueve solo tus ojos.");
+  } else {
+      gazeMode = 'head';
+      btnToggleMode.textContent = "3. Modo Cabeza";
+      CFG.invertGazeY = true; // <-- This is the change
+      showInfo("Modo Cabeza activado. Mueve tu cabeza para navegar.");
   }
+}
 
   // --- Eventos de Botones ---
   btnStartCam.onclick = startCamera;
