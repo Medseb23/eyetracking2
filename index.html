@@ -40,8 +40,9 @@
   <div id="topbar">
     <button id="btnStartCam" class="btn primary">1. Iniciar Cámara</button>
     <button id="btnCenterGaze" class="btn special">2. Centrar Mirada</button>
-    <button id="btnToggleMode" class="btn">3. Alternar Modo Mirada</button>
-    <button id="btnStartBrush" class="btn">4. Iniciar Brocha</button>
+    <button id="btnCalibrate" class="btn">3. Calibrar Mirada</button>
+    <button id="btnToggleMode" class="btn">4. Alternar Modo Mirada</button>
+    <button id="btnStartBrush" class="btn">5. Iniciar Brocha</button>
     <button id="btnClear" class="btn warn">🧹 Limpiar</button>
     <span class="sp" id="count">pts: 0</span>
   </div>
@@ -70,17 +71,19 @@
   let isPainting = false;
   let isFaceDetected = false;
   let gazeMode = 'head'; // 'head' o 'eye'
+  let calibrationPoints = { tl: null, tr: null, br: null, bl: null };
+  let calibrationStep = 0;
   
   // --- Configuración ---
   const CFG = {
     brush: 15,
-    mouthThr: 0.35, // Umbral para abrir la boca
-    mouthHys: 0.05, // Evita que el pintado parpadee
+    mouthThr: 0.35,
+    mouthHys: 0.05,
     gazeScaleHeadX: 10,
     gazeScaleHeadY: 14,
-    gazeScaleEyeX: 2.5,  // Sensibilidad más baja para el modo ojo
+    gazeScaleEyeX: 2.5,
     gazeScaleEyeY: 3,
-    invertGazeY: true, // Invertir eje Y
+    invertGazeY: true,
     gazeSmoothingAlpha: 0.25,
     gazeMaxSpeed: 0.1
   };
@@ -101,6 +104,7 @@
   // --- Botones ---
   const btnStartCam = document.getElementById('btnStartCam');
   const btnCenterGaze = document.getElementById('btnCenterGaze');
+  const btnCalibrate = document.getElementById('btnCalibrate');
   const btnToggleMode = document.getElementById('btnToggleMode');
   const btnStartBrush = document.getElementById('btnStartBrush');
   const btnClear = document.getElementById('btnClear');
@@ -182,6 +186,7 @@
           isFaceDetected = true;
           showInfo("✅ Rostro detectado. ¡Ahora centra tu mirada!");
           btnCenterGaze.disabled = false;
+          btnCalibrate.disabled = false;
           btnToggleMode.disabled = false;
           btnStartBrush.disabled = false;
       }
@@ -255,6 +260,7 @@
       isFaceDetected = false;
       cursor.style.display = 'none';
       btnCenterGaze.disabled = true;
+      btnCalibrate.disabled = true;
       btnToggleMode.disabled = true;
       btnStartBrush.disabled = true;
       showErr("❌ No se detecta tu rostro. Acércate a la cámara.");
@@ -290,26 +296,79 @@
       gazeCenter.y = irisN.y;
       smoothedGaze.x = W / 2;
       smoothedGaze.y = H / 2;
-      showInfo("🎯 Mirada centrada. ¡Ya puedes iniciar la brocha!");
+      showInfo("🎯 Mirada centrada. ¡Ya puedes calibrar!");
+  }
+  
+  // --- Lógica de Calibración ---
+  function calibrateGaze() {
+    calibrationStep = 0;
+    showInfo("Comenzando calibración. Mira la esquina superior izquierda (↑↖️) y haz clic en el botón.");
+    // El primer paso se captura al hacer clic en el botón, los siguientes en el loop de calibración
   }
 
- function toggleGazeMode() {
-  if (gazeMode === 'head') {
-      gazeMode = 'eye';
-      btnToggleMode.textContent = "3. Modo Ojo";
-      CFG.invertGazeY = false; // <-- This is the change
-      showInfo("Modo Ojo activado. Fija tu cabeza y mueve solo tus ojos.");
-  } else {
-      gazeMode = 'head';
-      btnToggleMode.textContent = "3. Modo Cabeza";
-      CFG.invertGazeY = true; // <-- This is the change
-      showInfo("Modo Cabeza activado. Mueve tu cabeza para navegar.");
+  function processCalibration() {
+    if (calibrationStep === 0) {
+      calibrationPoints.tl = {...irisN};
+      calibrationStep = 1;
+      showInfo("Ahora mira la esquina superior derecha (↗️) y haz clic.");
+    } else if (calibrationStep === 1) {
+      calibrationPoints.tr = {...irisN};
+      calibrationStep = 2;
+      showInfo("Ahora mira la esquina inferior derecha (↘️) y haz clic.");
+    } else if (calibrationStep === 2) {
+      calibrationPoints.br = {...irisN};
+      calibrationStep = 3;
+      showInfo("Ahora mira la esquina inferior izquierda (↙️) y haz clic.");
+    } else if (calibrationStep === 3) {
+      calibrationPoints.bl = {...irisN};
+      calibrationStep = 0; // Terminar la calibración
+      calculateGazeScales();
+      showInfo("🎉 ¡Calibración completa! Ya puedes iniciar la brocha.");
+    }
   }
-}
+
+  function calculateGazeScales() {
+    const minX = Math.min(calibrationPoints.tl.x, calibrationPoints.bl.x, calibrationPoints.tr.x, calibrationPoints.br.x);
+    const maxX = Math.max(calibrationPoints.tl.x, calibrationPoints.bl.x, calibrationPoints.tr.x, calibrationPoints.br.x);
+    const minY = Math.min(calibrationPoints.tl.y, calibrationPoints.tr.y, calibrationPoints.br.y, calibrationPoints.bl.y);
+    const maxY = Math.max(calibrationPoints.tl.y, calibrationPoints.tr.y, calibrationPoints.br.y, calibrationPoints.bl.y);
+
+    const rangeX = maxX - minX;
+    const rangeY = maxY - minY;
+
+    if (rangeX > 0 && rangeY > 0) {
+      // Calibrar el modo Cabeza (mayor sensibilidad)
+      CFG.gazeScaleHeadX = 1 / rangeX;
+      CFG.gazeScaleHeadY = 1 / rangeY;
+      
+      // Calibrar el modo Ojo (menor sensibilidad, usar un factor)
+      CFG.gazeScaleEyeX = (1 / rangeX) * 0.25; // Factor de reducción
+      CFG.gazeScaleEyeY = (1 / rangeY) * 0.25;
+      
+      // Ajustar el centro de la mirada para el nuevo rango
+      gazeCenter.x = minX + rangeX / 2;
+      gazeCenter.y = minY + rangeY / 2;
+    }
+  }
+
+  function toggleGazeMode() {
+    if (gazeMode === 'head') {
+        gazeMode = 'eye';
+        btnToggleMode.textContent = "4. Modo Ojo";
+        CFG.invertGazeY = false;
+        showInfo("Modo Ojo activado. Fija tu cabeza y mueve solo tus ojos.");
+    } else {
+        gazeMode = 'head';
+        btnToggleMode.textContent = "4. Modo Cabeza";
+        CFG.invertGazeY = true;
+        showInfo("Modo Cabeza activado. Mueve tu cabeza para navegar.");
+    }
+  }
 
   // --- Eventos de Botones ---
   btnStartCam.onclick = startCamera;
   btnCenterGaze.onclick = centerGaze;
+  btnCalibrate.onclick = processCalibration;
   btnToggleMode.onclick = toggleGazeMode;
   btnStartBrush.onclick = () => {
     mode = 'brush';
@@ -324,6 +383,7 @@
 
   // Deshabilitar botones al inicio
   btnCenterGaze.disabled = true;
+  btnCalibrate.disabled = true;
   btnToggleMode.disabled = true;
   btnStartBrush.disabled = true;
 
