@@ -246,7 +246,7 @@
       }
       
       // Aplicar suavizado (filtro de una pasada)
-      if (smoothedGaze.x === 0.5) { // inicializar
+      if (mode !== 'idle' && smoothedGaze.x === 0.5) { 
           smoothedGaze.x = px_mapped;
           smoothedGaze.y = py_mapped;
       } else {
@@ -255,14 +255,14 @@
       }
 
       // Limitar la velocidad
-      const dx = smoothedGaze.x - (cursor.offsetLeft / W);
-      const dy = smoothedGaze.y - (cursor.offsetTop / H);
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const dx_norm = smoothedGaze.x - (cursor.offsetLeft / W);
+      const dy_norm = smoothedGaze.y - (cursor.offsetTop / H);
+      const dist_norm = Math.sqrt(dx_norm * dx_norm + dy_norm * dy_norm);
 
-      if (dist > CFG.gazeMaxSpeed) {
-          const ratio = CFG.gazeMaxSpeed / dist;
-          smoothedGaze.x = (cursor.offsetLeft / W) + dx * ratio;
-          smoothedGaze.y = (cursor.offsetTop / H) + dy * ratio;
+      if (dist_norm > CFG.gazeMaxSpeed) {
+          const ratio = CFG.gazeMaxSpeed / dist_norm;
+          smoothedGaze.x = (cursor.offsetLeft / W) + dx_norm * ratio;
+          smoothedGaze.y = (cursor.offsetTop / H) + dy_norm * ratio;
       }
 
       let px = smoothedGaze.x * W;
