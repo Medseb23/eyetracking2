@@ -60,6 +60,25 @@
 
 <script>
 (function(){
+  // ====== CONFIG ======
+  const CFG = {
+    detConf:.5, trackConf:.5,
+    // Si usas cámara frontal, por defecto lo ponemos en true para que coincida con tu sensación de “muevo a la derecha → va a la derecha”.
+    mirrorInput: true,
+    // Inversiones adicionales si necesitas (aplican DESPUÉS de mirrorInput)
+    invertX: true,   // <-- ajústalo acá; si cambias, la app resetea la calibración v2 automáticamente
+    invertY: true,   // <--
+    gainX:1.15, gainY:1.15,
+    dwellMs:800,
+    speak:true
+  };
+
+  // ====== KEYS (v2 invalida calibraciones previas) ======
+  const LS_VER = 'aac_ver';       // para detectar cambios en flags que requieren reset
+  const LS_CAL = 'aac_cal_v2';    // nueva clave v2 (afín)
+  const LS_ROI = 'aac_roi_v2';    // nueva clave v2 (ROI)
+
+  // ====== UI refs ======
   const btnCam = document.getElementById('btnCam');
   const btnPreview = document.getElementById('btnPreview');
   const btnRoi = document.getElementById('btnRoi');
@@ -77,31 +96,38 @@
 
   function log(s){ const t=new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${s}\n` + logEl.textContent; }
   function showErr(msg){ errbar.textContent='⚠️ '+msg; errbar.style.display='block'; }
-
-  const CFG = {
-    detConf:.5, trackConf:.5,
-    invertX:true, invertY:true,
-    gainX:1.15, gainY:1.15,
-    dwellMs:800,
-    speak:true
-  };
   dwellSpan.textContent=CFG.dwellMs;
 
+  // ====== Estado global ======
   let W=window.innerWidth, H=window.innerHeight;
   let stream=null, video=null;
   let faceMesh=null, faceBox=null, irisN={x:null,y:null};
   let A=[1,0,0,1], b=[0,0], hasCalib=false;
   let roi={x0:.08,y0:.08,x1:.92,y1:.92};
-  const LS_CAL='aac_cal_v1', LS_ROI='aac_roi_v1';
-  (function loadLS(){
-    try {
-      const c=JSON.parse(localStorage.getItem(LS_CAL)||'null');
-      if(c&&c.A&&c.b){ A=c.A; b=c.b; hasCalib=true; }
-      const r=JSON.parse(localStorage.getItem(LS_ROI)||'null');
-      if(r&&'x0'in r){ roi=r; }
-    }catch{}
+
+  // ====== Carga/Validación de versión + flags ======
+  function saveLS(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+  function loadLS(k){ try{ const s=localStorage.getItem(k); return s?JSON.parse(s):null; }catch{ return null; } }
+
+  const currentVer = {mirrorInput:CFG.mirrorInput, invertX:CFG.invertX, invertY:CFG.invertY};
+  const savedVer = loadLS(LS_VER);
+  if(!savedVer || savedVer.mirrorInput!==CFG.mirrorInput || savedVer.invertX!==CFG.invertX || savedVer.invertY!==CFG.invertY){
+    // Cambió orientación → reset calibración v2
+    saveLS(LS_CAL,null);
+    saveLS(LS_ROI,null);
+    saveLS(LS_VER,currentVer);
+    log('↻ Reset calibración v2 por cambio de mirror/invert.');
+  }
+
+  // Cargar calibración/ROI si existen (v2)
+  (function loadCalRoi(){
+    const c=loadLS(LS_CAL);
+    if(c&&c.A&&c.b){ A=c.A; b=c.b; hasCalib=true; }
+    const r=loadLS(LS_ROI);
+    if(r&&'x0'in r){ roi=r; }
   })();
 
+  // ====== ROI/helpers ======
   function pxROI(){ return { x: roi.x0*W, y: roi.y0*H, w:(roi.x1-roi.x0)*W, h:(roi.y1-roi.y0)*H }; }
   function setDefaultAffineFromROI(){
     const R=pxROI(); A=[R.w,0,0,R.h]; b=[R.x,R.y];
@@ -114,9 +140,13 @@
   }
   function hideRoi(){ roiBox.style.display='none'; }
 
-  function resize(){ W=window.innerWidth; H=window.innerHeight; preview.width=300; preview.height=225; preview.style.width='300px'; preview.style.height='225px'; if(!hasCalib) setDefaultAffineFromROI(); }
+  function resize(){ W=window.innerWidth; H=window.innerHeight;
+    preview.width=300; preview.height=225; preview.style.width='300px'; preview.style.height='225px';
+    if(!hasCalib) setDefaultAffineFromROI();
+  }
   window.addEventListener('resize', resize); resize();
 
+  // ====== Cámara ======
   async function startCamera(){
     try{
       stream = await navigator.mediaDevices.getUserMedia({
@@ -131,16 +161,15 @@
   btnCam.onclick=startCamera;
   btnPreview.onclick=()=>{ preview.style.display = (preview.style.display==='none'||preview.style.display==='')?'block':'none'; };
 
+  // ====== FaceMesh ======
   faceMesh = new FaceMesh({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
   faceMesh.setOptions({ maxNumFaces:2, refineLandmarks:true, minDetectionConfidence:CFG.detConf, minTrackingConfidence:CFG.trackConf });
 
   function bboxOf(lm){let minx=1,miny=1,maxx=0,maxy=0; for(const p of lm){minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y);} return {minx,miny,maxx,maxy,cx:(minx+maxx)/2,cy:(miny+maxy)/2,area:(maxx-minx)*(maxy-miny)};}
   function pickMainFace(arr){ if(!arr||!arr.length) return null; let k=0,b=Infinity; for(let i=0;i<arr.length;i++){ const bb=bboxOf(arr[i]); const dc=(bb.cx-0.5)**2+(bb.cy-0.5)**2; const s=dc/(bb.area+1e-6); if(s<b){b=s;k=i;} } return arr[k]; }
-  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
-
   async function loop(){ if(video && video.readyState>=2){ await faceMesh.send({image:video}); } requestAnimationFrame(loop); }
 
-  // -------- Dwell state --------
+  // ====== Dwell / Cursor ======
   cursor.style.display='block';
   let focusCell=null, focusStart=0;
 
@@ -181,51 +210,78 @@
     }
   }
 
+  // ====== Resultados de FaceMesh → Iris → Normalizado → Flip(s) → Afín ======
   faceMesh.onResults(res=>{
-    if(preview.style.display!=='none' && video){ pctx.clearRect(0,0,preview.width,preview.height); pctx.drawImage(video,0,0,preview.width,preview.height); }
+    if(preview.style.display!=='none' && video){
+      pctx.clearRect(0,0,preview.width,preview.height);
+      pctx.drawImage(video,0,0,preview.width,preview.height);
+    }
     if(!res.multiFaceLandmarks || !res.multiFaceLandmarks.length) return;
     const lm = pickMainFace(res.multiFaceLandmarks); if(!lm) return;
 
     faceBox = bboxOf(lm); if(faceBox.area<0.02) return;
 
-    const rC=avgXY(lm,[468,469,470,471]), lC=avgXY(lm,[473,474,475,476]);
+    // Centros de iris
+    const rc=avgXY(lm,[468,469,470,471]), lc=avgXY(lm,[473,474,475,476]);
+    // Parpados / comisuras (marcos)
     const R_L=lm[33], R_R=lm[133], L_L=lm[362], L_R=lm[263];
     const R_T=lm[159], R_B=lm[145], L_T=lm[386], L_B=lm[374];
+
     const rW=Math.max(1e-6, Math.abs(R_R.x-R_L.x));
     const lW=Math.max(1e-6, Math.abs(L_R.x-L_L.x));
     const rH=Math.max(1e-6, Math.abs(R_B.y-R_T.y));
     const lH=Math.max(1e-6, Math.abs(L_B.y-L_T.y));
-    let rx=(rC.x-Math.min(R_L.x,R_R.x))/rW, lx=(lC.x-Math.min(L_L.x,L_R.x))/lW;
-    let ry=(rC.y-Math.min(R_T.y,R_B.y))/rH, ly=(lC.y-Math.min(L_T.y,L_B.y))/lH;
-    let gxN=cl01((rx+lx)/2), gyN=cl01((ry+ly)/2);
-    if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
-    gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
-    irisN.x=gxN; irisN.y=gyN;
 
-    const px = A[0]*irisN.x + A[1]*irisN.y + b[0];
-    const py = A[2]*irisN.x + A[3]*irisN.y + b[1];
+    // Normalizar cada ojo a [0..1] (dentro de su propio marco)
+    let rx=(rc.x-Math.min(R_L.x,R_R.x))/rW, lx=(lc.x-Math.min(L_L.x,L_R.x))/lW;
+    let ry=(rc.y-Math.min(R_T.y,R_B.y))/rH, ly=(lc.y-Math.min(L_T.y,L_B.y))/lH;
+    let gx=cl01((rx+lx)/2), gy=cl01((ry+ly)/2); // promedio de ambos ojos
+
+    // 1) “Espejo” de la cámara frontal (sensación de usuario)
+    if(CFG.mirrorInput){ gx = 1 - gx; }
+
+    // 2) Inversiones extra (sobre lo anterior)
+    if(CFG.invertX){ gx = 1 - gx; }
+    if(CFG.invertY){ gy = 1 - gy; }
+
+    // 3) Ganancia local (manteniendo en [0..1])
+    gx = cl01(0.5 + (gx-0.5)*CFG.gainX);
+    gy = cl01(0.5 + (gy-0.5)*CFG.gainY);
+
+    irisN.x=gx; irisN.y=gy;
+
+    // 4) Proyección afín (calibración / ROI)
+    const px = A[0]*gx + A[1]*gy + b[0];
+    const py = A[2]*gx + A[3]*gy + b[1];
 
     updateCursor(px,py);
     dwellDetect();
-    if(preview.style.display!=='none'){ drawDot(lm[468]); drawDot(lm[473]); pctx.fillStyle='#fff'; pctx.fillText(`irisN=(${irisN.x.toFixed(2)},${irisN.y.toFixed(2)})`,8,16); }
+
+    // debug preview
+    if(preview.style.display!=='none'){
+      drawDot(lm[468]); drawDot(lm[473]);
+      pctx.fillStyle='#fff'; pctx.fillText(`gx,gy=(${gx.toFixed(2)},${gy.toFixed(2)})`,8,16);
+    }
   });
 
   function avgXY(lm, idxs){ let x=0,y=0; for(const i of idxs){ x+=lm[i].x; y+=lm[i].y; } return {x:x/idxs.length, y:y/idxs.length}; }
   function drawDot(p){ pctx.fillStyle='#0f0'; pctx.beginPath(); pctx.arc(p.x*preview.width,p.y*preview.height,2.2,0,7); pctx.fill(); }
   function cl01(v){ return Math.max(0,Math.min(1,v)); }
 
-  // ROI + Calibración
+  // ====== ROI + Calibración (5 puntos) ======
   btnRoi.onclick = ()=>{
-    alert('Arrastra sobre la pantalla para definir el ROI (zona donde colocaré los puntos de calibración).');
+    alert('Arrastra para definir ROI (zona válida para la mirada).');
     drawRoi();
     const start={}; let drawing=false;
     function onDown(e){ drawing=true; start.x=e.clientX; start.y=e.clientY; place(start.x,start.y,1,1); }
     function onMove(e){ if(!drawing) return; const x0=Math.min(start.x,e.clientX), y0=Math.min(start.y,e.clientY); const x1=Math.max(start.x,e.clientX), y1=Math.max(start.y,e.clientY); place(x0,y0, x1-x0, y1-y0); }
-    function onUp(){ drawing=false;
+    function onUp(){
+      drawing=false;
       const rDoc = {x:0,y:64,w:window.innerWidth,h:window.innerHeight-74};
       const bb=roiBox.getBoundingClientRect();
       roi = { x0:(bb.left-rDoc.x)/rDoc.w, y0:(bb.top-rDoc.y)/rDoc.h, x1:(bb.right-rDoc.x)/rDoc.w, y1:(bb.bottom-rDoc.y)/rDoc.h };
-      saveLS(LS_ROI,roi); if(!hasCalib) setDefaultAffineFromROI();
+      saveLS(LS_ROI,roi);
+      if(!hasCalib) setDefaultAffineFromROI();
       window.removeEventListener('mousedown',onDown); window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp);
       log('ROI guardada');
     }
@@ -238,7 +294,7 @@
   btnCal.onclick = async ()=>{
     const R=pxROI(); drawRoi();
     const pts=[ {x:R.x,y:R.y},{x:R.x+R.w,y:R.y},{x:R.x+R.w,y:R.y+R.h},{x:R.x,y:R.y+R.h},{x:R.x+R.w/2,y:R.y+R.h/2} ];
-    alert('Calibración: clic en cada punto, luego MIRA el punto ~1.2s.');
+    alert('Calibración: clic en cada punto, luego MIRA el punto ~1.2s sin mover la cabeza.');
     const src=[], dst=[];
     for(const t of pts){
       const mark = document.createElement('div');
@@ -258,13 +314,13 @@
       });
     }
     const sol = lsqAffine(src,dst);
-    if(sol){ A=sol.A; b=sol.b; hasCalib=true; saveLS(LS_CAL,{A,b}); hideRoi(); log('✅ Calibración guardada'); }
+    if(sol){ A=sol.A; b=sol.b; hasCalib=true; saveLS(LS_CAL,{A,b}); hideRoi(); log('✅ Calibración v2 guardada'); }
     else{ log('Calibración fallida'); }
   };
 
   btnReset.onclick = ()=>{ hasCalib=false; saveLS(LS_CAL,null); setDefaultAffineFromROI(); log('Calibración reiniciada'); };
 
-  function saveLS(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+  // ====== Álgebra ======
   function mean2(a){ if(!a.length) return [NaN,NaN]; let sx=0,sy=0; for(const v of a){ sx+=v[0]; sy+=v[1]; } return [sx/a.length, sy/a.length]; }
   function transpose(A){const m=A.length,n=A[0].length,AT=Array.from({length:n},()=>Array(m).fill(0));for(let i=0;i<m;i++)for(let j=0;j<n;j++)AT[j][i]=A[i][j];return AT;}
   function mul(A,B){const m=A.length,n=A[0].length,p=B[0].length,C=Array.from({length:m},()=>Array(p).fill(0));for(let i=0;i<m;i++)for(let k=0;k<n;k++)for(let j=0;j<p;j++)C[i][j]+=A[i][k]*B[k][j];return C;}
