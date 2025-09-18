@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Comunicador por Mirada (Desktop) — Sí / No / Gracias / Ayuda</title>
+
+<!-- MediaPipe FaceMesh (con iris) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0f1115;color:#fff;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  #topbar{position:fixed;top:10px;left:10px;right:10px;display:flex;gap:8px;flex-wrap:wrap;
+          background:rgba(0,0,0,.45);padding:8px 10px;border-radius:10px;align-items:center;z-index:10}
+  .btn{appearance:none;border:0;padding:8px 12px;border-radius:10px;cursor:pointer;background:#22272e;color:#fff;font-weight:600}
+  .btn.primary{background:#00e676;color:#111}
+  .btn.warn{background:#ff5252}
+  #wrap{position:fixed;inset:64px 10px 10px 10px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;
+        gap:8px;border-radius:12px}
+  .cell{position:relative;border-radius:12px;background:#141922;display:flex;align-items:center;justify-content:center;
+        font-size:clamp(28px,6vw,54px);font-weight:800;letter-spacing:.5px;user-select:none}
+  .cell::after{content:"";position:absolute;inset:0;border-radius:12px;border:2px solid transparent;transition:all .12s}
+  .cell.focus::after{border-color:#00e676;box-shadow:0 0 0 4px rgba(0,230,118,.2) inset}
+  .cell.success{background:#1b2b22}
+  #cursor{position:fixed;width:22px;height:22px;border:2px solid rgba(255,255,255,.95);border-radius:50%;
+          pointer-events:none;transform:translate(-50%,-50%);display:none;z-index:12}
+  #roi{position:fixed;border:2px dashed rgba(0,230,118,.9);border-radius:10px;inset:auto;display:none;z-index:9}
+  #preview{position:fixed;right:10px;top:64px;width:300px;height:225px;background:#000a;border-radius:8px;display:none;z-index:11}
+  #progress{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);width:320px;height:12px;background:#2b2f3a;border-radius:8px;overflow:hidden}
+  #fill{height:100%;width:0;background:#00e676}
+  #log{position:fixed;left:10px;bottom:10px;right:10px;background:rgba(0,0,0,.4);border-radius:10px;
+       padding:6px 10px;font:12px/1.3 monospace;max-height:28vh;overflow:auto}
+  #errbar{position:fixed;left:0;right:0;bottom:0;background:#ff3344;color:#100;padding:6px 10px;font:12px/1.3 monospace;display:none;z-index:20}
+
+  /* Colores por celda */
+  .c-si{background:linear-gradient(145deg,#10331f,#0e1b15)}
+  .c-no{background:linear-gradient(145deg,#311217,#1a0e11)}
+  .c-gracias{background:linear-gradient(145deg,#142536,#0f1822)}
+  .c-ayuda{background:linear-gradient(145deg,#332810,#1d1609)}
+</style>
+</head>
+<body>
+<div id="topbar">
+  <button id="btnCam" class="btn">🎥 Probar cámara</button>
+  <button id="btnPreview" class="btn">👁️ Preview</button>
+  <button id="btnRoi" class="btn">🖱️ ROI</button>
+  <button id="btnCal" class="btn">🎯 Calibrar</button>
+  <button id="btnReset" class="btn warn">♻️ Reset Calibración</button>
+  <span style="margin-left:auto;font:12px/1.2 monospace;opacity:.9">Dwell: <span id="dwellMs">800</span> ms</span>
+</div>
+
+<div id="wrap">
+  <div class="cell c-si"     data-key="sí">Sí</div>
+  <div class="cell c-no"     data-key="no">No</div>
+  <div class="cell c-gracias"data-key="gracias">Gracias</div>
+  <div class="cell c-ayuda"  data-key="ayuda">Ayuda</div>
+</div>
+
+<div id="cursor"></div>
+<canvas id="preview"></canvas>
+<div id="roi"></div>
+<div id="progress"><div id="fill"></div></div>
+<div id="log"></div>
+<div id="errbar"></div>
+
+<script>
+(function(){
+  // ---------- UI refs ----------
+  const btnCam = document.getElementById('btnCam');
+  const btnPreview = document.getElementById('btnPreview');
+  const btnRoi = document.getElementById('btnRoi');
+  const btnCal = document.getElementById('btnCal');
+  const btnReset = document.getElementById('btnReset');
+  const wrap = document.getElementById('wrap');
+  const cells = Array.from(document.querySelectorAll('.cell'));
+  const cursor = document.getElementById('cursor');
+  const preview = document.getElementById('preview'); const pctx = preview.getContext('2d');
+  const roiBox = document.getElementById('roi');
+  const progress = document.getElementById('fill');
+  const dwellSpan = document.getElementById('dwellMs');
+  const logEl = document.getElementById('log');
+  const errbar=document.getElementById('errbar');
+
+  function log(s){ const t=new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${s}\n` + logEl.textContent; }
+  function showErr(msg){ errbar.textContent='⚠️ '+msg; errbar.style.display='block'; }
+
+  // ---------- Config ----------
+  const CFG = {
+    detConf:.5, trackConf:.5,
+    invertX:false, invertY:false,
+    gainX:1.15, gainY:1.15,
+    dwellMs:800,                   // ← tiempo para “seleccionar” una celda
+    speak:true
+  };
+  dwellSpan.textContent=CFG.dwellMs;
+
+  // ---------- Estado global ----------
+  let W=window.innerWidth, H=window.innerHeight;
+  let stream=null, video=null;
+  let faceMesh=null, faceBox=null, irisN={x:null,y:null};
+  let A=[1,0,0,1], b=[0,0], hasCalib=false; // irisN → px
+  let roi={x0:.08,y0:.08,x1:.92,y1:.92};    // normalizado
+  const LS_CAL='aac_cal_v1', LS_ROI='aac_roi_v1';
+  (function loadLS(){
+    try {
+      const c=JSON.parse(localStorage.getItem(LS_CAL)||'null');
+      if(c&&c.A&&c.b){ A=c.A; b=c.b; hasCalib=true; }
+      const r=JSON.parse(localStorage.getItem(LS_ROI)||'null');
+      if(r&&'x0'in r){ roi=r; }
+    }catch{}
+  })();
+
+  // ---------- Layout / ROI helpers ----------
+  function pxROI(){ return {
+    x: roi.x0*W, y: roi.y0*H, w:(roi.x1-roi.x0)*W, h:(roi.y1-roi.y0)*H
+  }; }
+  function setDefaultAffineFromROI(){
+    const R=pxROI();
+    A=[R.w,0,0,R.h]; b=[R.x,R.y];
+    if(!hasCalib) { drawRoi(); }
+  }
+  function drawRoi(){
+    const R=pxROI();
+    roiBox.style.display='block';
+    roiBox.style.left=R.x+'px';
+    roiBox.style.top=R.y+'px';
+    roiBox.style.width=R.w+'px';
+    roiBox.style.height=R.h+'px';
+  }
+  function hideRoi(){ roiBox.style.display='none'; }
+
+  function resize(){
+    W=window.innerWidth; H=window.innerHeight;
+    preview.width=300; preview.height=225;
+    preview.style.width='300px'; preview.style.height='225px';
+    if(!hasCalib) setDefaultAffineFromROI();
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // ---------- Cámara ----------
+  async function startCamera(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60},facingMode:'user'},
+        audio:false
+      });
+      video=document.createElement('video');
+      video.playsInline=true; video.muted=true; video.autoplay=true;
+      video.srcObject=stream; await video.play();
+      log('Cámara OK');
+      errbar.style.display='none';
+      requestAnimationFrame(loop);
+    }catch(e){
+      showErr((e.name||'')+' — '+(e.message||e));
+      log('Cámara fallo: '+e);
+    }
+  }
+  btnCam.onclick=startCamera;
+  btnPreview.onclick=()=>{ preview.style.display = (preview.style.display==='none'||preview.style.display==='')?'block':'none'; };
+
+  // ---------- FaceMesh ----------
+  faceMesh = new FaceMesh({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+  faceMesh.setOptions({ maxNumFaces:2, refineLandmarks:true, minDetectionConfidence:CFG.detConf, minTrackingConfidence:CFG.trackConf });
+
+  function bboxOf(lm){let minx=1,miny=1,maxx=0,maxy=0; for(const p of lm){minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y);} return {minx,miny,maxx,maxy,cx:(minx+maxx)/2,cy:(miny+maxy)/2,area:(maxx-minx)*(maxy-miny)};}
+  function pickMainFace(arr){ if(!arr||!arr.length) return null; let k=0,b=Infinity; for(let i=0;i<arr.length;i++){ const bb=bboxOf(arr[i]); const dc=(bb.cx-0.5)**2+(bb.cy-0.5)**2; const s=dc/(bb.area+1e-6); if(s<b){b=s;k=i;} } return arr[k]; }
+  function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
+
+  async function loop(){
+    if(video && video.readyState>=2){
+      await faceMesh.send({image:video});
+    }
+    requestAnimationFrame(loop);
+  }
+
+  faceMesh.onResults(res=>{
+    if(preview.style.display!=='none'){ pctx.clearRect(0,0,preview.width,preview.height); pctx.drawImage(video,0,0,preview.width,preview.height); }
+    if(!res.multiFaceLandmarks || !res.multiFaceLandmarks.length) return;
+    const lm = pickMainFace(res.multiFaceLandmarks); if(!lm) return;
+
+    faceBox = bboxOf(lm);
+    if(faceBox.area<0.02) return;
+
+    // IRIS → normalizado (0..1)
+    const rC=avgXY(lm,[468,469,470,471]), lC=avgXY(lm,[473,474,475,476]);
+    const R_L=lm[33], R_R=lm[133], L_L=lm[362], L_R=lm[263];
+    const R_T=lm[159], R_B=lm[145], L_T=lm[386], L_B=lm[374];
+    const rW=Math.max(1e-6, Math.abs(R_R.x-R_L.x));
+    const lW=Math.max(1e-6, Math.abs(L_R.x-L_L.x));
+    const rH=Math.max(1e-6, Math.abs(R_B.y-R_T.y));
+    const lH=Math.max(1e-6, Math.abs(L_B.y-L_T.y));
+    let rx=(rC.x-Math.min(R_L.x,R_R.x))/rW, lx=(lC.x-Math.min(L_L.x,L_R.x))/lW;
+    let ry=(rC.y-Math.min(R_T.y,R_B.y))/rH, ly=(lC.y-Math.min(L_T.y,L_B.y))/lH;
+    let gxN=cl01((rx+lx)/2), gyN=cl01((ry+ly)/2);
+    if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
+    gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
+    irisN.x=gxN; irisN.y=gyN;
+
+    // Proyección por afín (ROI por defecto si no hay calib)
+    const px = A[0]*irisN.x + A[1]*irisN.y + b[0];
+    const py = A[2]*irisN.x + A[3]*irisN.y + b[1];
+
+    // Cursor y dwell
+    moveCursor(px,py);
+    dwellDetect(px,py);
+
+    // Preview puntos
+    if(preview.style.display!=='none'){
+      drawDot(lm[468]); drawDot(lm[469]); drawDot(lm[470]); drawDot(lm[471]);
+      drawDot(lm[473]); drawDot(lm[474]); drawDot(lm[475]); drawDot(lm[476]);
+      pctx.fillStyle='#fff';
+      pctx.fillText(`irisN=(${irisN.x.toFixed(2)},${irisN.y.toFixed(2)})`,8,16);
+    }
+  });
+
+  function avgXY(lm, idxs){ let x=0,y=0; for(const i of idxs){ x+=lm[i].x; y+=lm[i].y; } return {x:x/idxs.length, y:y/idxs.length}; }
+  function drawDot(p){ pctx.fillStyle='#0f0'; pctx.beginPath(); pctx.arc(p.x*preview.width,p.y*preview.height,2.2,0,7); pctx.fill(); }
+  function cl01(v){ return Math.max(0,Math.min(1,v)); }
+
+  // ---------- Cursor + selección ----------
+  cursor.style.display='block';
+  let focusCell=null, focusStart=0;
+  function moveCursor(x,y){
+    const px=Math.max(0,Math.min(W-1,x)), py=Math.max(0,Math.min(H-1,y));
+    cursor.style.left=px+'px'; cursor.style.top=py+'px';
+
+    // Qué celda está bajo el cursor
+    const el = document.elementFromPoint(px,py);
+    const cell = el && el.closest?.('.cell');
+    if(cell!==focusCell){
+      if(focusCell) focusCell.classList.remove('focus');
+      focusCell = cell;
+      focusStart = performance.now();
+      progress.style.width='0%';
+      if(focusCell) focusCell.classList.add('focus');
+    }else if(focusCell){
+      const dt = performance.now() - focusStart;
+      const f = Math.max(0, Math.min(1, dt / CFG.dwellMs));
+      progress.style.width = (f*100).toFixed(0)+'%';
+      if(dt>=CFG.dwellMs){
+        selectCell(focusCell);
+        // reset para evitar disparos múltiples
+        focusStart = performance.now();
+        progress.style.width='0%';
+      }
+    }
+  }
+
+  function selectCell(cell){
+    const key = cell.dataset.key || cell.textContent.trim().toLowerCase();
+    cell.classList.add('success');
+    setTimeout(()=>cell.classList.remove('success'), 400);
+    log(`Seleccionado: ${key}`);
+    if(CFG.speak && 'speechSynthesis' in window){
+      const u = new SpeechSynthesisUtterance(key);
+      u.lang='es-ES'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
+    }
+  }
+
+  // ---------- ROI + Calibración ----------
+  btnRoi.onclick = ()=>{
+    alert('Arrastra sobre la pantalla para definir el ROI (zona donde colocaré los puntos de calibración).');
+    drawRoi();
+    const start={}; let drawing=false;
+    function onDown(e){ drawing=true; const r=wrap.getBoundingClientRect();
+      start.x=e.clientX; start.y=e.clientY; place(start.x,start.y,1,1); }
+    function onMove(e){ if(!drawing) return;
+      const x0=Math.min(start.x,e.clientX), y0=Math.min(start.y,e.clientY);
+      const x1=Math.max(start.x,e.clientX), y1=Math.max(start.y,e.clientY);
+      place(x0,y0, x1-x0, y1-y0); }
+    function onUp(e){ drawing=false;
+      const rDoc = {x:0,y:64,w:window.innerWidth,h:window.innerHeight-74};
+      const bb=roiBox.getBoundingClientRect();
+      roi = {
+        x0: (bb.left-rDoc.x)/rDoc.w, y0:(bb.top-rDoc.y)/rDoc.h,
+        x1: (bb.right-rDoc.x)/rDoc.w, y1:(bb.bottom-rDoc.y)/rDoc.h
+      };
+      saveLS(LS_ROI,roi);
+      if(!hasCalib) setDefaultAffineFromROI();
+      window.removeEventListener('mousedown',onDown);
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onUp);
+      log('ROI guardada');
+    }
+    function place(x,y,w,h){ roiBox.style.display='block'; roiBox.style.left=x+'px'; roiBox.style.top=y+'px'; roiBox.style.width=w+'px'; roiBox.style.height=h+'px'; }
+    window.addEventListener('mousedown',onDown);
+    window.addEventListener('mousemove',onMove);
+    window.addEventListener('mouseup',onUp,{once:true});
+  };
+
+  btnCal.onclick = async ()=>{
+    const R=pxROI();
+    drawRoi();
+    const pts=[
+      {x:R.x,y:R.y},{x:R.x+R.w,y:R.y},{x:R.x+R.w,y:R.y+R.h},{x:R.x,y:R.y+R.h},
+      {x:R.x+R.w/2,y:R.y+R.h/2}
+    ];
+    alert('Calibración: haz clic en cada punto, luego MIRA el punto ~1.2s.');
+    const src=[], dst=[];
+    for(const t of pts){
+      const mark = document.createElement('div');
+      Object.assign(mark.style,{position:'fixed',left:t.x+'px',top:t.y+'px',width:'16px',height:'16px',
+        borderRadius:'50%',background:'#00e676',boxShadow:'0 0 0 6px rgba(0,230,118,.25)',transform:'translate(-50%,-50%)',zIndex:9});
+      document.body.appendChild(mark);
+      await new Promise(res=>{
+        mark.addEventListener('click', ()=>{
+          const samples=[]; const t0=performance.now();
+          (function step(){
+            const now=performance.now();
+            if(irisN.x!=null) samples.push([irisN.x, irisN.y]);
+            if(now-t0<1200) requestAnimationFrame(step);
+            else{ const m=mean2(samples); if(!isNaN(m[0])){ src.push(m); dst.push([t.x,t.y]); } document.body.removeChild(mark); res(); }
+          })();
+        }, {once:true});
+      });
+    }
+    const sol = lsqAffine(src,dst);
+    if(sol){ A=sol.A; b=sol.b; hasCalib=true; saveLS(LS_CAL,{A,b}); hideRoi(); log('✅ Calibración guardada'); }
+    else{ log('Calibración fallida'); }
+  };
+
+  btnReset.onclick = ()=>{ hasCalib=false; saveLS(LS_CAL,null); setDefaultAffineFromROI(); log('Calibración reiniciada'); };
+
+  // ---------- Utils ----------
+  function saveLS(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+  function mean2(a){ if(!a.length) return [NaN,NaN]; let sx=0,sy=0; for(const v of a){ sx+=v[0]; sy+=v[1]; } return [sx/a.length, sy/a.length]; }
+  function transpose(A){const m=A.length,n=A[0].length,AT=Array.from({length:n},()=>Array(m).fill(0));for(let i=0;i<m;i++)for(let j=0;j<n;j++)AT[j][i]=A[i][j];return AT;}
+  function mul(A,B){const m=A.length,n=A[0].length,p=B[0].length,C=Array.from({length:m},()=>Array(p).fill(0));for(let i=0;i<m;i++)for(let k=0;k<n;k++)for(let j=0;j<p;j++)C[i][j]+=A[i][k]*B[k][j];return C;}
+  function mulVec(A,v){const m=A.length,n=A[0].length,r=Array(m).fill(0);for(let i=0;i<m;i++)for(let j=0;j<n;j++)r[i]+=A[i][j]*v[j];return r;}
+  function solveGaussian(A,b){const n=A.length,M=A.map((row,i)=>row.concat([b[i]]));for(let i=0;i<n;i++){let max=i;for(let r=i+1;r<n;r++)if(Math.abs(M[r][i])>Math.abs(M[max][i]))max=r;if(Math.abs(M[max][i])<1e-9)return null;[M[i],M[max]]=[M[max],M[i]];const piv=M[i][i];for(let k=i;k<=n;k++)M[i][k]/=piv;for(let r=0;r<n;r++)if(r!==i){const f=M[r][i];for(let k=i;k<=n;k++)M[r][k]-=f*M[i][k];}}return M.map(row=>row[n]);}
+  function lsqAffine(srcPts,dstPts){
+    if(!srcPts.length || srcPts.length<3) return null;
+    const M=[],Z=[];
+    for(let i=0;i<srcPts.length;i++){
+      const[gx,gy]=srcPts[i]; const[tx,ty]=dstPts[i];
+      M.push([gx,gy,0,0,1,0]); Z.push(tx);
+      M.push([0,0,gx,gy,0,1]); Z.push(ty);
+    }
+    const Mt=transpose(M),MtM=mul(Mt,M),MtZ=mulVec(Mt,Z),p=solveGaussian(MtM,MtZ);
+    return p?{A:[p[0],p[1],p[2],p[3]],b:[p[4],p[5]]}:null;
+  }
+
+})();
+</script>
+</body>
+</html>
