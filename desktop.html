@@ -4,10 +4,7 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Comunicador por Mirada (Desktop) — Sí / No / Gracias / Ayuda</title>
-
-<!-- MediaPipe FaceMesh (con iris) -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
-
 <style>
   html,body{margin:0;padding:0;height:100%;background:#0f1115;color:#fff;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial}
   #topbar{position:fixed;top:10px;left:10px;right:10px;display:flex;gap:8px;flex-wrap:wrap;
@@ -31,8 +28,6 @@
   #log{position:fixed;left:10px;bottom:10px;right:10px;background:rgba(0,0,0,.4);border-radius:10px;
        padding:6px 10px;font:12px/1.3 monospace;max-height:28vh;overflow:auto}
   #errbar{position:fixed;left:0;right:0;bottom:0;background:#ff3344;color:#100;padding:6px 10px;font:12px/1.3 monospace;display:none;z-index:20}
-
-  /* Colores por celda */
   .c-si{background:linear-gradient(145deg,#10331f,#0e1b15)}
   .c-no{background:linear-gradient(145deg,#311217,#1a0e11)}
   .c-gracias{background:linear-gradient(145deg,#142536,#0f1822)}
@@ -65,7 +60,6 @@
 
 <script>
 (function(){
-  // ---------- UI refs ----------
   const btnCam = document.getElementById('btnCam');
   const btnPreview = document.getElementById('btnPreview');
   const btnRoi = document.getElementById('btnRoi');
@@ -84,22 +78,20 @@
   function log(s){ const t=new Date().toLocaleTimeString(); logEl.textContent = `[${t}] ${s}\n` + logEl.textContent; }
   function showErr(msg){ errbar.textContent='⚠️ '+msg; errbar.style.display='block'; }
 
-  // ---------- Config ----------
   const CFG = {
     detConf:.5, trackConf:.5,
     invertX:false, invertY:false,
     gainX:1.15, gainY:1.15,
-    dwellMs:800,                   // ← tiempo para “seleccionar” una celda
+    dwellMs:800,
     speak:true
   };
   dwellSpan.textContent=CFG.dwellMs;
 
-  // ---------- Estado global ----------
   let W=window.innerWidth, H=window.innerHeight;
   let stream=null, video=null;
   let faceMesh=null, faceBox=null, irisN={x:null,y:null};
-  let A=[1,0,0,1], b=[0,0], hasCalib=false; // irisN → px
-  let roi={x0:.08,y0:.08,x1:.92,y1:.92};    // normalizado
+  let A=[1,0,0,1], b=[0,0], hasCalib=false;
+  let roi={x0:.08,y0:.08,x1:.92,y1:.92};
   const LS_CAL='aac_cal_v1', LS_ROI='aac_roi_v1';
   (function loadLS(){
     try {
@@ -110,55 +102,35 @@
     }catch{}
   })();
 
-  // ---------- Layout / ROI helpers ----------
-  function pxROI(){ return {
-    x: roi.x0*W, y: roi.y0*H, w:(roi.x1-roi.x0)*W, h:(roi.y1-roi.y0)*H
-  }; }
+  function pxROI(){ return { x: roi.x0*W, y: roi.y0*H, w:(roi.x1-roi.x0)*W, h:(roi.y1-roi.y0)*H }; }
   function setDefaultAffineFromROI(){
-    const R=pxROI();
-    A=[R.w,0,0,R.h]; b=[R.x,R.y];
-    if(!hasCalib) { drawRoi(); }
+    const R=pxROI(); A=[R.w,0,0,R.h]; b=[R.x,R.y];
+    if(!hasCalib) drawRoi();
   }
   function drawRoi(){
-    const R=pxROI();
-    roiBox.style.display='block';
-    roiBox.style.left=R.x+'px';
-    roiBox.style.top=R.y+'px';
-    roiBox.style.width=R.w+'px';
-    roiBox.style.height=R.h+'px';
+    const R=pxROI(); roiBox.style.display='block';
+    roiBox.style.left=R.x+'px'; roiBox.style.top=R.y+'px';
+    roiBox.style.width=R.w+'px'; roiBox.style.height=R.h+'px';
   }
   function hideRoi(){ roiBox.style.display='none'; }
 
-  function resize(){
-    W=window.innerWidth; H=window.innerHeight;
-    preview.width=300; preview.height=225;
-    preview.style.width='300px'; preview.style.height='225px';
-    if(!hasCalib) setDefaultAffineFromROI();
-  }
+  function resize(){ W=window.innerWidth; H=window.innerHeight; preview.width=300; preview.height=225; preview.style.width='300px'; preview.style.height='225px'; if(!hasCalib) setDefaultAffineFromROI(); }
   window.addEventListener('resize', resize); resize();
 
-  // ---------- Cámara ----------
   async function startCamera(){
     try{
       stream = await navigator.mediaDevices.getUserMedia({
-        video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60},facingMode:'user'},
-        audio:false
+        video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60,max:60},facingMode:'user'}, audio:false
       });
       video=document.createElement('video');
       video.playsInline=true; video.muted=true; video.autoplay=true;
       video.srcObject=stream; await video.play();
-      log('Cámara OK');
-      errbar.style.display='none';
-      requestAnimationFrame(loop);
-    }catch(e){
-      showErr((e.name||'')+' — '+(e.message||e));
-      log('Cámara fallo: '+e);
-    }
+      log('Cámara OK'); errbar.style.display='none'; requestAnimationFrame(loop);
+    }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); log('Cámara fallo: '+e); }
   }
   btnCam.onclick=startCamera;
   btnPreview.onclick=()=>{ preview.style.display = (preview.style.display==='none'||preview.style.display==='')?'block':'none'; };
 
-  // ---------- FaceMesh ----------
   faceMesh = new FaceMesh({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
   faceMesh.setOptions({ maxNumFaces:2, refineLandmarks:true, minDetectionConfidence:CFG.detConf, minTrackingConfidence:CFG.trackConf });
 
@@ -166,65 +138,15 @@
   function pickMainFace(arr){ if(!arr||!arr.length) return null; let k=0,b=Infinity; for(let i=0;i<arr.length;i++){ const bb=bboxOf(arr[i]); const dc=(bb.cx-0.5)**2+(bb.cy-0.5)**2; const s=dc/(bb.area+1e-6); if(s<b){b=s;k=i;} } return arr[k]; }
   function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
 
-  async function loop(){
-    if(video && video.readyState>=2){
-      await faceMesh.send({image:video});
-    }
-    requestAnimationFrame(loop);
-  }
+  async function loop(){ if(video && video.readyState>=2){ await faceMesh.send({image:video}); } requestAnimationFrame(loop); }
 
-  faceMesh.onResults(res=>{
-    if(preview.style.display!=='none'){ pctx.clearRect(0,0,preview.width,preview.height); pctx.drawImage(video,0,0,preview.width,preview.height); }
-    if(!res.multiFaceLandmarks || !res.multiFaceLandmarks.length) return;
-    const lm = pickMainFace(res.multiFaceLandmarks); if(!lm) return;
-
-    faceBox = bboxOf(lm);
-    if(faceBox.area<0.02) return;
-
-    // IRIS → normalizado (0..1)
-    const rC=avgXY(lm,[468,469,470,471]), lC=avgXY(lm,[473,474,475,476]);
-    const R_L=lm[33], R_R=lm[133], L_L=lm[362], L_R=lm[263];
-    const R_T=lm[159], R_B=lm[145], L_T=lm[386], L_B=lm[374];
-    const rW=Math.max(1e-6, Math.abs(R_R.x-R_L.x));
-    const lW=Math.max(1e-6, Math.abs(L_R.x-L_L.x));
-    const rH=Math.max(1e-6, Math.abs(R_B.y-R_T.y));
-    const lH=Math.max(1e-6, Math.abs(L_B.y-L_T.y));
-    let rx=(rC.x-Math.min(R_L.x,R_R.x))/rW, lx=(lC.x-Math.min(L_L.x,L_R.x))/lW;
-    let ry=(rC.y-Math.min(R_T.y,R_B.y))/rH, ly=(lC.y-Math.min(L_T.y,L_B.y))/lH;
-    let gxN=cl01((rx+lx)/2), gyN=cl01((ry+ly)/2);
-    if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
-    gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
-    irisN.x=gxN; irisN.y=gyN;
-
-    // Proyección por afín (ROI por defecto si no hay calib)
-    const px = A[0]*irisN.x + A[1]*irisN.y + b[0];
-    const py = A[2]*irisN.x + A[3]*irisN.y + b[1];
-
-    // Cursor y dwell
-    moveCursor(px,py);
-    dwellDetect(px,py);
-
-    // Preview puntos
-    if(preview.style.display!=='none'){
-      drawDot(lm[468]); drawDot(lm[469]); drawDot(lm[470]); drawDot(lm[471]);
-      drawDot(lm[473]); drawDot(lm[474]); drawDot(lm[475]); drawDot(lm[476]);
-      pctx.fillStyle='#fff';
-      pctx.fillText(`irisN=(${irisN.x.toFixed(2)},${irisN.y.toFixed(2)})`,8,16);
-    }
-  });
-
-  function avgXY(lm, idxs){ let x=0,y=0; for(const i of idxs){ x+=lm[i].x; y+=lm[i].y; } return {x:x/idxs.length, y:y/idxs.length}; }
-  function drawDot(p){ pctx.fillStyle='#0f0'; pctx.beginPath(); pctx.arc(p.x*preview.width,p.y*preview.height,2.2,0,7); pctx.fill(); }
-  function cl01(v){ return Math.max(0,Math.min(1,v)); }
-
-  // ---------- Cursor + selección ----------
+  // -------- Dwell state --------
   cursor.style.display='block';
   let focusCell=null, focusStart=0;
-  function moveCursor(x,y){
+
+  function updateCursor(x,y){
     const px=Math.max(0,Math.min(W-1,x)), py=Math.max(0,Math.min(H-1,y));
     cursor.style.left=px+'px'; cursor.style.top=py+'px';
-
-    // Qué celda está bajo el cursor
     const el = document.elementFromPoint(px,py);
     const cell = el && el.closest?.('.cell');
     if(cell!==focusCell){
@@ -233,16 +155,18 @@
       focusStart = performance.now();
       progress.style.width='0%';
       if(focusCell) focusCell.classList.add('focus');
-    }else if(focusCell){
-      const dt = performance.now() - focusStart;
-      const f = Math.max(0, Math.min(1, dt / CFG.dwellMs));
-      progress.style.width = (f*100).toFixed(0)+'%';
-      if(dt>=CFG.dwellMs){
-        selectCell(focusCell);
-        // reset para evitar disparos múltiples
-        focusStart = performance.now();
-        progress.style.width='0%';
-      }
+    }
+  }
+
+  function dwellDetect(){
+    if(!focusCell) return;
+    const dt = performance.now() - focusStart;
+    const f = Math.max(0, Math.min(1, dt / CFG.dwellMs));
+    progress.style.width = (f*100).toFixed(0)+'%';
+    if(dt>=CFG.dwellMs){
+      selectCell(focusCell);
+      focusStart = performance.now();
+      progress.style.width='0%';
     }
   }
 
@@ -257,29 +181,52 @@
     }
   }
 
-  // ---------- ROI + Calibración ----------
+  faceMesh.onResults(res=>{
+    if(preview.style.display!=='none' && video){ pctx.clearRect(0,0,preview.width,preview.height); pctx.drawImage(video,0,0,preview.width,preview.height); }
+    if(!res.multiFaceLandmarks || !res.multiFaceLandmarks.length) return;
+    const lm = pickMainFace(res.multiFaceLandmarks); if(!lm) return;
+
+    faceBox = bboxOf(lm); if(faceBox.area<0.02) return;
+
+    const rC=avgXY(lm,[468,469,470,471]), lC=avgXY(lm,[473,474,475,476]);
+    const R_L=lm[33], R_R=lm[133], L_L=lm[362], L_R=lm[263];
+    const R_T=lm[159], R_B=lm[145], L_T=lm[386], L_B=lm[374];
+    const rW=Math.max(1e-6, Math.abs(R_R.x-R_L.x));
+    const lW=Math.max(1e-6, Math.abs(L_R.x-L_L.x));
+    const rH=Math.max(1e-6, Math.abs(R_B.y-R_T.y));
+    const lH=Math.max(1e-6, Math.abs(L_B.y-L_T.y));
+    let rx=(rC.x-Math.min(R_L.x,R_R.x))/rW, lx=(lC.x-Math.min(L_L.x,L_R.x))/lW;
+    let ry=(rC.y-Math.min(R_T.y,R_B.y))/rH, ly=(lC.y-Math.min(L_T.y,L_B.y))/lH;
+    let gxN=cl01((rx+lx)/2), gyN=cl01((ry+ly)/2);
+    if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
+    gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
+    irisN.x=gxN; irisN.y=gyN;
+
+    const px = A[0]*irisN.x + A[1]*irisN.y + b[0];
+    const py = A[2]*irisN.x + A[3]*irisN.y + b[1];
+
+    updateCursor(px,py);
+    dwellDetect();
+    if(preview.style.display!=='none'){ drawDot(lm[468]); drawDot(lm[473]); pctx.fillStyle='#fff'; pctx.fillText(`irisN=(${irisN.x.toFixed(2)},${irisN.y.toFixed(2)})`,8,16); }
+  });
+
+  function avgXY(lm, idxs){ let x=0,y=0; for(const i of idxs){ x+=lm[i].x; y+=lm[i].y; } return {x:x/idxs.length, y:y/idxs.length}; }
+  function drawDot(p){ pctx.fillStyle='#0f0'; pctx.beginPath(); pctx.arc(p.x*preview.width,p.y*preview.height,2.2,0,7); pctx.fill(); }
+  function cl01(v){ return Math.max(0,Math.min(1,v)); }
+
+  // ROI + Calibración
   btnRoi.onclick = ()=>{
     alert('Arrastra sobre la pantalla para definir el ROI (zona donde colocaré los puntos de calibración).');
     drawRoi();
     const start={}; let drawing=false;
-    function onDown(e){ drawing=true; const r=wrap.getBoundingClientRect();
-      start.x=e.clientX; start.y=e.clientY; place(start.x,start.y,1,1); }
-    function onMove(e){ if(!drawing) return;
-      const x0=Math.min(start.x,e.clientX), y0=Math.min(start.y,e.clientY);
-      const x1=Math.max(start.x,e.clientX), y1=Math.max(start.y,e.clientY);
-      place(x0,y0, x1-x0, y1-y0); }
-    function onUp(e){ drawing=false;
+    function onDown(e){ drawing=true; start.x=e.clientX; start.y=e.clientY; place(start.x,start.y,1,1); }
+    function onMove(e){ if(!drawing) return; const x0=Math.min(start.x,e.clientX), y0=Math.min(start.y,e.clientY); const x1=Math.max(start.x,e.clientX), y1=Math.max(start.y,e.clientY); place(x0,y0, x1-x0, y1-y0); }
+    function onUp(){ drawing=false;
       const rDoc = {x:0,y:64,w:window.innerWidth,h:window.innerHeight-74};
       const bb=roiBox.getBoundingClientRect();
-      roi = {
-        x0: (bb.left-rDoc.x)/rDoc.w, y0:(bb.top-rDoc.y)/rDoc.h,
-        x1: (bb.right-rDoc.x)/rDoc.w, y1:(bb.bottom-rDoc.y)/rDoc.h
-      };
-      saveLS(LS_ROI,roi);
-      if(!hasCalib) setDefaultAffineFromROI();
-      window.removeEventListener('mousedown',onDown);
-      window.removeEventListener('mousemove',onMove);
-      window.removeEventListener('mouseup',onUp);
+      roi = { x0:(bb.left-rDoc.x)/rDoc.w, y0:(bb.top-rDoc.y)/rDoc.h, x1:(bb.right-rDoc.x)/rDoc.w, y1:(bb.bottom-rDoc.y)/rDoc.h };
+      saveLS(LS_ROI,roi); if(!hasCalib) setDefaultAffineFromROI();
+      window.removeEventListener('mousedown',onDown); window.removeEventListener('mousemove',onMove); window.removeEventListener('mouseup',onUp);
       log('ROI guardada');
     }
     function place(x,y,w,h){ roiBox.style.display='block'; roiBox.style.left=x+'px'; roiBox.style.top=y+'px'; roiBox.style.width=w+'px'; roiBox.style.height=h+'px'; }
@@ -289,13 +236,9 @@
   };
 
   btnCal.onclick = async ()=>{
-    const R=pxROI();
-    drawRoi();
-    const pts=[
-      {x:R.x,y:R.y},{x:R.x+R.w,y:R.y},{x:R.x+R.w,y:R.y+R.h},{x:R.x,y:R.y+R.h},
-      {x:R.x+R.w/2,y:R.y+R.h/2}
-    ];
-    alert('Calibración: haz clic en cada punto, luego MIRA el punto ~1.2s.');
+    const R=pxROI(); drawRoi();
+    const pts=[ {x:R.x,y:R.y},{x:R.x+R.w,y:R.y},{x:R.x+R.w,y:R.y+R.h},{x:R.x,y:R.y+R.h},{x:R.x+R.w/2,y:R.y+R.h/2} ];
+    alert('Calibración: clic en cada punto, luego MIRA el punto ~1.2s.');
     const src=[], dst=[];
     for(const t of pts){
       const mark = document.createElement('div');
@@ -321,7 +264,6 @@
 
   btnReset.onclick = ()=>{ hasCalib=false; saveLS(LS_CAL,null); setDefaultAffineFromROI(); log('Calibración reiniciada'); };
 
-  // ---------- Utils ----------
   function saveLS(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch{} }
   function mean2(a){ if(!a.length) return [NaN,NaN]; let sx=0,sy=0; for(const v of a){ sx+=v[0]; sy+=v[1]; } return [sx/a.length, sy/a.length]; }
   function transpose(A){const m=A.length,n=A[0].length,AT=Array.from({length:n},()=>Array(m).fill(0));for(let i=0;i<m;i++)for(let j=0;j<n;j++)AT[j][i]=A[i][j];return AT;}
@@ -339,7 +281,6 @@
     const Mt=transpose(M),MtM=mul(Mt,M),MtZ=mulVec(Mt,Z),p=solveGaussian(MtM,MtZ);
     return p?{A:[p[0],p[1],p[2],p[3]],b:[p[4],p[5]]}:null;
   }
-
 })();
 </script>
 </body>
