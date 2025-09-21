@@ -63,11 +63,11 @@
   // ====== CONFIG ======
   const CFG = {
     detConf:.5, trackConf:.5,
-    // Si usas cámara frontal, por defecto lo ponemos en true para que coincida con tu sensación de “muevo a la derecha → va a la derecha”.
+    // Si usas cámara frontal, por defecto lo ponemos en true para que coincida con tu sensación de "muevo a la derecha → va a la derecha".
     mirrorInput: true,
     // Inversiones adicionales si necesitas (aplican DESPUÉS de mirrorInput)
-    invertX: true,   // <-- ajústalo acá; si cambias, la app resetea la calibración v2 automáticamente
-    invertY: true,   // <--
+    invertX: false,   // <-- ajústalo acá; si cambias, la app resetea la calibración v2 automáticamente
+    invertY: false,   // <--
     gainX:1.15, gainY:1.15,
     dwellMs:800,
     speak:true
@@ -294,7 +294,7 @@
   btnCal.onclick = async ()=>{
     const R=pxROI(); drawRoi();
     const pts=[ {x:R.x,y:R.y},{x:R.x+R.w,y:R.y},{x:R.x+R.w,y:R.y+R.h},{x:R.x,y:R.y+R.h},{x:R.x+R.w/2,y:R.y+R.h/2} ];
-    alert('Calibración: clic en cada punto, luego MIRA el punto ~1.2s sin mover la cabeza.');
+    log('Calibración automática: mira cada punto verde por 1.5s.');
     const src=[], dst=[];
     for(const t of pts){
       const mark = document.createElement('div');
@@ -302,19 +302,17 @@
         borderRadius:'50%',background:'#00e676',boxShadow:'0 0 0 6px rgba(0,230,118,.25)',transform:'translate(-50%,-50%)',zIndex:9});
       document.body.appendChild(mark);
       await new Promise(res=>{
-        mark.addEventListener('click', ()=>{
-          const samples=[]; const t0=performance.now();
-          (function step(){
-            const now=performance.now();
-            if(irisN.x!=null) samples.push([irisN.x, irisN.y]);
-            if(now-t0<1200) requestAnimationFrame(step);
-            else{ const m=mean2(samples); if(!isNaN(m[0])){ src.push(m); dst.push([t.x,t.y]); } document.body.removeChild(mark); res(); }
-          })();
-        }, {once:true});
+        const samples=[]; const t0=performance.now();
+        (function step(){
+          const now=performance.now();
+          if(irisN.x!=null) samples.push([irisN.x, irisN.y]);
+          if(now-t0<1500) requestAnimationFrame(step);
+          else{ const m=mean2(samples); if(!isNaN(m[0])){ src.push(m); dst.push([t.x,t.y]); } document.body.removeChild(mark); res(); }
+        })();
       });
     }
     const sol = lsqAffine(src,dst);
-    if(sol){ A=sol.A; b=sol.b; hasCalib=true; saveLS(LS_CAL,{A,b}); hideRoi(); log('✅ Calibración v2 guardada'); }
+    if(sol){ A=sol.A; b=sol.b; hasCalib=true; saveLS(LS_CAL,{A,b}); hideRoi(); log('✅ Calibración automática completada'); }
     else{ log('Calibración fallida'); }
   };
 
