@@ -35,6 +35,7 @@
 <div id="cursor"></div>
 <div id="bar"><div id="fill"></div></div>
 <div id="err"></div>
+<div id="debug" style="position:fixed;left:0;top:60px;background:rgba(0,0,0,.7);color:#fff;padding:5px;font:12px monospace;z-index:10;"></div>
 
 <script>
 (function(){
@@ -48,9 +49,9 @@
   function loadLS(k){ try{ const s=localStorage.getItem(k); return s?JSON.parse(s):null; }catch{ return null; } }
 
   const CFG = {
-    detConf:.5, trackConf:.5,
-    refine: true,
-    camW: 640, camH: 480, camFps: 30,
+    detConf: IS_IOS ? .3 : .5, trackConf:.5,
+    refine: IS_IOS ? false : true,
+    camW: IS_IOS ? 320 : 640, camH: IS_IOS ? 240 : 480, camFps: IS_IOS ? 15 : 30,
     mirrorInput: true,
     invertX:false, invertY:false,
     gainX:1.1, gainY:1.1,
@@ -66,6 +67,7 @@
   const cursor = document.getElementById('cursor');
   const fill = document.getElementById('fill');
   const err = document.getElementById('err');
+  const debug = document.getElementById('debug');
 
   let W=window.innerWidth, H=window.innerHeight;
   let stream=null, video=null, faceMesh=null;
@@ -100,6 +102,7 @@
       video=document.createElement('video');
       video.playsInline=true; video.muted=true; video.autoplay=true;
       video.srcObject=stream; await video.play();
+      if(IS_IOS){ video.style.position='fixed'; video.style.top='-9999px'; document.body.appendChild(video); }
       err.style.display='none';
       requestAnimationFrame(loop);
     }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); }
@@ -179,9 +182,11 @@
   }
 
   faceMesh.onResults(res=>{
+    debug.textContent = `Faces: ${res.multiFaceLandmarks ? res.multiFaceLandmarks.length : 0}`;
     if(!res.multiFaceLandmarks||!res.multiFaceLandmarks.length) return;
     const lm=res.multiFaceLandmarks[0];
     const fb=bboxOf(lm); if(fb.area<0.02) return;
+    debug.textContent += ` | Area: ${fb.area.toFixed(3)}`;
 
     const rC=avgXY(lm,[468,469,470,471]), lC=avgXY(lm,[473,474,475,476]);
     const R_L=lm[33],R_R=lm[133],L_L=lm[362],L_R=lm[263];
@@ -195,13 +200,16 @@
     if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
     gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
     irisN.x=gxN; irisN.y=gyN;
+    debug.textContent += ` | iris: ${gxN.toFixed(2)},${gyN.toFixed(2)}`;
 
     // Suavizado exponencial
     if (smoothedGx === null) smoothedGx = gxN; else smoothedGx = CFG.smoothingFactor * smoothedGx + (1 - CFG.smoothingFactor) * gxN;
     if (smoothedGy === null) smoothedGy = gyN; else smoothedGy = CFG.smoothingFactor * smoothedGy + (1 - CFG.smoothingFactor) * gyN;
+    debug.textContent += ` | smooth: ${smoothedGx.toFixed(2)},${smoothedGy.toFixed(2)}`;
 
     const px = A[0]*smoothedGx + A[1]*smoothedGy + b[0];
     const py = A[2]*smoothedGx + A[3]*smoothedGy + b[1];
+    debug.textContent += ` | px,py: ${px.toFixed(0)},${py.toFixed(0)}`;
 
     updateCursor(px,py);
     dwellDetect();
