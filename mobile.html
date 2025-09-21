@@ -74,6 +74,7 @@
   let irisN={x:null,y:null};
   let smoothedGx = null, smoothedGy = null;
   let A=[W,0,0,H], b=[0,0], hasCal=false;
+  let frameCount = 0;
 
   function showErr(m){ err.textContent='⚠️ '+m; err.style.display='block'; }
   function resize(){ W=window.innerWidth; H=window.innerHeight; if(!hasCal){ A=[W,0,0,H]; b=[0,0]; } }
@@ -102,7 +103,11 @@
       video=document.createElement('video');
       video.playsInline=true; video.muted=true; video.autoplay=true;
       video.srcObject=stream; await video.play();
-      if(IS_IOS){ video.style.position='fixed'; video.style.top='-9999px'; document.body.appendChild(video); }
+      if(IS_IOS){
+        video.style.position='fixed'; video.style.top='70px'; video.style.left='10px';
+        video.style.width='100px'; video.style.height='75px'; video.style.zIndex='20';
+        document.body.appendChild(video);
+      }
       err.style.display='none';
       requestAnimationFrame(loop);
     }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); }
@@ -148,7 +153,15 @@
   function bboxOf(lm){let minx=1,miny=1,maxx=0,maxy=0; for(const p of lm){minx=Math.min(minx,p.x); miny=Math.min(miny,p.y); maxx=Math.max(maxx,p.x); maxy=Math.max(maxy,p.y);} return {minx,miny,maxx,maxy,cx:(minx+maxx)/2,cy:(miny+maxy)/2,area:(maxx-minx)*(maxy-miny)};}
   function dist2(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.hypot(dx,dy); }
   function avgXY(lm, idxs){ let x=0,y=0; for(const i of idxs){ x+=lm[i].x; y+=lm[i].y; } return {x:x/idxs.length, y:y/idxs.length}; }
-  async function loop(){ if(video && video.readyState>=2){ await faceMesh.send({image:video}); } requestAnimationFrame(loop); }
+  async function loop(){
+    if(video && video.readyState>=2){
+      await faceMesh.send({image:video});
+      debug.textContent = `Loop: ready | ` + debug.textContent;
+    } else {
+      debug.textContent = `Loop: not ready (${video?.readyState})`;
+    }
+    requestAnimationFrame(loop);
+  }
 
   // -------- Dwell state --------
   cursor.style.display='block';
@@ -182,7 +195,8 @@
   }
 
   faceMesh.onResults(res=>{
-    debug.textContent = `Faces: ${res.multiFaceLandmarks ? res.multiFaceLandmarks.length : 0}`;
+    frameCount++;
+    debug.textContent = `Frame: ${frameCount} | Faces: ${res.multiFaceLandmarks ? res.multiFaceLandmarks.length : 0}`;
     if(!res.multiFaceLandmarks||!res.multiFaceLandmarks.length) return;
     const lm=res.multiFaceLandmarks[0];
     const fb=bboxOf(lm); if(fb.area<0.02) return;
