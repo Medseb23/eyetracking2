@@ -50,7 +50,7 @@
 
   const CFG = {
     detConf: IS_IOS ? .3 : .5, trackConf:.5,
-    refine: IS_IOS ? false : true,
+    refine: true,
     camW: IS_IOS ? 320 : 640, camH: IS_IOS ? 240 : 480, camFps: IS_IOS ? 15 : 30,
     mirrorInput: true,
     invertX:false, invertY:false,
@@ -88,15 +88,18 @@
   })();
 
   async function startCamera(){
+    startBtn.textContent = 'Cargando...';
     debug.textContent = 'Starting camera...';
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       showErr('getUserMedia no soportado');
       debug.textContent += ' | getUserMedia not supported';
+      startBtn.textContent = 'Probar cámara';
       return;
     }
     if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
       showErr('Requiere HTTPS para cámara');
       debug.textContent += ' | Not HTTPS';
+      startBtn.textContent = 'Probar cámara';
       return;
     }
     debug.textContent += ' | Requesting camera...';
@@ -118,8 +121,9 @@
       await video.play();
       debug.textContent += ' | Video playing';
       err.style.display='none';
+      startBtn.textContent = 'Cámara activa';
       requestAnimationFrame(loop);
-    }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); debug.textContent += ' | Error: ' + e.message; }
+    }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); debug.textContent += ' | Error: ' + e.message; startBtn.textContent = 'Probar cámara'; }
   }
   startBtn.addEventListener('click', startCamera, {once:true});
   startBtn.addEventListener('touchend', (e) => { e.preventDefault(); startCamera(); }, {once:true});
