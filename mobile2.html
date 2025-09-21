@@ -25,6 +25,7 @@
   <button id="start" class="btn primary">🎥 Probar cámara</button>
   <button id="cal" class="btn">🎯 Calibrar</button>
   <button id="reset" class="btn">♻️ Reset</button>
+  <button id="testSpeech" class="btn">🔊 Probar voz</button>
 </div>
 <div id="grid">
   <div class="cell c-si"      data-key="sí">Sí</div>
@@ -66,6 +67,7 @@
   const startBtn = document.getElementById('start');
   const calBtn = document.getElementById('cal');
   const resetBtn = document.getElementById('reset');
+  const testSpeechBtn = document.getElementById('testSpeech');
   const cells = Array.from(document.querySelectorAll('.cell'));
   const cursor = document.getElementById('cursor');
   const roiBox = document.getElementById('roi');
@@ -99,7 +101,17 @@
   function resize(){ W=window.innerWidth; H=window.innerHeight; if(!hasCal){ setDefaultAffineFromROI(); } }
   window.addEventListener('resize', resize); resize();
   preview.width = 120; preview.height = 90;
-  preview.width = 100; preview.height = 75;
+
+  // Check speech synthesis
+  if('speechSynthesis' in window){
+    speechSynthesis.onvoiceschanged = () => {
+      const voices = speechSynthesis.getVoices();
+      const spanishVoices = voices.filter(v => v.lang.startsWith('es'));
+      debug.textContent = `Speech ready | Spanish voices: ${spanishVoices.length}`;
+    };
+  } else {
+    debug.textContent = 'Speech synthesis not supported';
+  }
 
   // Load calibration
   (function(){
@@ -151,6 +163,7 @@
   startBtn.addEventListener('touchend', (e) => { e.preventDefault(); startCamera(); }, {once:true});
 
   resetBtn.addEventListener('click', ()=>{ hasCal=false; saveLS(LS_CAL,null); saveLS(LS_ROI,null); setDefaultAffineFromROI(); });
+  testSpeechBtn.addEventListener('click', () => selectCell({dataset: {key: 'prueba'}, textContent: 'prueba'}));
 
   calBtn.addEventListener('click', async ()=>{
     const pts = [
@@ -225,7 +238,36 @@
     const key=(cell.dataset.key||cell.textContent.trim()).toLowerCase();
     cell.classList.add('focus'); setTimeout(()=>cell.classList.remove('focus'),300);
     if(CFG.speak && 'speechSynthesis' in window){
-      const u=new SpeechSynthesisUtterance(key); u.lang='es-ES'; speechSynthesis.cancel(); speechSynthesis.speak(u);
+      try {
+        const u = new SpeechSynthesisUtterance(key);
+        // Try different Spanish language codes for iOS compatibility
+        const langCodes = IS_IOS ? ['es-ES', 'es-MX', 'es-US', 'es'] : ['es-ES'];
+        let langFound = false;
+        for(const lang of langCodes){
+          if(speechSynthesis.getVoices().some(v => v.lang.startsWith(lang))){
+            u.lang = lang;
+            langFound = true;
+            break;
+          }
+        }
+        if(!langFound) u.lang = 'es'; // fallback
+        u.volume = 1;
+        u.rate = 1;
+        speechSynthesis.cancel();
+        speechSynthesis.speak(u);
+        debug.textContent = `Speaking: ${key} (${u.lang})`;
+      } catch(e) {
+        debug.textContent = `Speech error: ${e.message}`;
+        // Fallback: try without language specification
+        try {
+          const fallbackU = new SpeechSynthesisUtterance(key);
+          speechSynthesis.cancel();
+          speechSynthesis.speak(fallbackU);
+          debug.textContent += ' | Fallback speech attempted';
+        } catch(e2) {
+          debug.textContent += ` | Fallback failed: ${e2.message}`;
+        }
+      }
     }
   }
 
