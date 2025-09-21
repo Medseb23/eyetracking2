@@ -69,6 +69,7 @@
     invertX: false,   // <-- ajústalo acá; si cambias, la app resetea la calibración v2 automáticamente
     invertY: false,   // <--
     gainX:1.15, gainY:1.15,
+    smoothingFactor: 0.8,  // Suavizado exponencial para reducir vibración (0-1, más alto = más suavizado)
     dwellMs:800,
     speak:true
   };
@@ -103,6 +104,7 @@
   let stream=null, video=null;
   let faceMesh=null, faceBox=null, irisN={x:null,y:null};
   let A=[1,0,0,1], b=[0,0], hasCalib=false;
+  let smoothedGx = null, smoothedGy = null;
   let roi={x0:.08,y0:.08,x1:.92,y1:.92};
 
   // ====== Carga/Validación de versión + flags ======
@@ -250,9 +252,13 @@
 
     irisN.x=gx; irisN.y=gy;
 
+    // 3.5) Suavizado exponencial para reducir vibración
+    if (smoothedGx === null) smoothedGx = gx; else smoothedGx = CFG.smoothingFactor * smoothedGx + (1 - CFG.smoothingFactor) * gx;
+    if (smoothedGy === null) smoothedGy = gy; else smoothedGy = CFG.smoothingFactor * smoothedGy + (1 - CFG.smoothingFactor) * gy;
+
     // 4) Proyección afín (calibración / ROI)
-    const px = A[0]*gx + A[1]*gy + b[0];
-    const py = A[2]*gx + A[3]*gy + b[1];
+    const px = A[0]*smoothedGx + A[1]*smoothedGy + b[0];
+    const py = A[2]*smoothedGx + A[3]*smoothedGy + b[1];
 
     updateCursor(px,py);
     dwellDetect();
@@ -260,7 +266,7 @@
     // debug preview
     if(preview.style.display!=='none'){
       drawDot(lm[468]); drawDot(lm[473]);
-      pctx.fillStyle='#fff'; pctx.fillText(`gx,gy=(${gx.toFixed(2)},${gy.toFixed(2)})`,8,16);
+      pctx.fillStyle='#fff'; pctx.fillText(`gx,gy=(${smoothedGx.toFixed(2)},${smoothedGy.toFixed(2)})`,8,16);
     }
   });
 
