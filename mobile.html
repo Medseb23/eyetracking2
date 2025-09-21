@@ -33,7 +33,7 @@
   <div class="cell c-ayuda"   data-key="ayuda">Ayuda</div>
 </div>
 <div id="cursor"></div>
-<canvas id="preview" style="position:fixed;right:10px;top:70px;width:100px;height:75px;background:#000;border:1px solid #fff;z-index:11;"></canvas>
+<canvas id="preview" style="position:fixed;right:10px;top:70px;width:100px;height:75px;background:#000;border:1px solid #fff;z-index:11;display:none;"></canvas>
 <div id="bar"><div id="fill"></div></div>
 <div id="err"></div>
 <div id="debug" style="position:fixed;left:0;top:60px;background:rgba(0,0,0,.7);color:#fff;padding:5px;font:12px monospace;z-index:10;"></div>
@@ -55,9 +55,9 @@
     camW: IS_IOS ? 320 : 640, camH: IS_IOS ? 240 : 480, camFps: IS_IOS ? 15 : 30,
     mirrorInput: true,
     invertX:false, invertY:false,
-    gainX:1.1, gainY:1.1,
-    smoothingFactor: 0.8,
-    dwellMs:1000,
+    gainX:0.8, gainY:0.8,
+    smoothingFactor: 0.9,
+    dwellMs:1500,
     speak:true
   };
 
@@ -108,8 +108,7 @@
       video.playsInline=true; video.muted=true; video.autoplay=true;
       video.srcObject=stream; await video.play();
       if(IS_IOS){
-        video.style.position='fixed'; video.style.top='70px'; video.style.left='10px';
-        video.style.width='100px'; video.style.height='75px'; video.style.zIndex='20';
+        video.style.position='fixed'; video.style.top='-9999px'; // Hide video since it's working
         document.body.appendChild(video);
       }
       err.style.display='none';
