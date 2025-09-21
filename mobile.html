@@ -41,12 +41,20 @@
   const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
+  // LocalStorage keys
+  const LS_CAL = 'mobile_aac_cal';
+
+  function saveLS(k,v){ try{ if(v==null) localStorage.removeItem(k); else localStorage.setItem(k,JSON.stringify(v)); }catch{} }
+  function loadLS(k){ try{ const s=localStorage.getItem(k); return s?JSON.parse(s):null; }catch{ return null; } }
+
   const CFG = {
     detConf:.5, trackConf:.5,
-    refine: false,
+    refine: true,
     camW: 640, camH: 480, camFps: 30,
+    mirrorInput: true,
     invertX:false, invertY:false,
     gainX:1.1, gainY:1.1,
+    smoothingFactor: 0.8,
     dwellMs:1000,
     speak:true
   };
@@ -62,13 +70,28 @@
   let W=window.innerWidth, H=window.innerHeight;
   let stream=null, video=null, faceMesh=null;
   let irisN={x:null,y:null};
+  let smoothedGx = null, smoothedGy = null;
   let A=[W,0,0,H], b=[0,0], hasCal=false;
 
   function showErr(m){ err.textContent='⚠️ '+m; err.style.display='block'; }
   function resize(){ W=window.innerWidth; H=window.innerHeight; if(!hasCal){ A=[W,0,0,H]; b=[0,0]; } }
   window.addEventListener('resize', resize); resize();
 
+  // Load calibration
+  (function(){
+    const c = loadLS(LS_CAL);
+    if(c && c.A && c.b){ A=c.A; b=c.b; hasCal=true; }
+  })();
+
   async function startCamera(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      showErr('getUserMedia no soportado');
+      return;
+    }
+    if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
+      showErr('Requiere HTTPS para cámara');
+      return;
+    }
     try{
       stream = await navigator.mediaDevices.getUserMedia({
         video:{width:{ideal:CFG.camW},height:{ideal:CFG.camH},frameRate:{ideal:CFG.camFps,max:CFG.camFps},facingMode:'user'},
@@ -83,6 +106,38 @@
   }
   startBtn.addEventListener('click', startCamera, {once:true});
   if(IS_IOS){ window.addEventListener('touchstart', ()=>startCamera(), {once:true}); }
+
+  resetBtn.addEventListener('click', ()=>{ hasCal=false; saveLS(LS_CAL,null); A=[W,0,0,H]; b=[0,0]; });
+
+  calBtn.addEventListener('click', async ()=>{
+    const pts = [
+      {x:0, y:0}, {x:W, y:0}, {x:W, y:H}, {x:0, y:H}, {x:W/2, y:H/2}
+    ];
+    const src = [], dst = [];
+    for(const t of pts){
+      const mark = document.createElement('div');
+      Object.assign(mark.style, {
+        position:'fixed', left:t.x+'px', top:t.y+'px', width:'20px', height:'20px',
+        borderRadius:'50%', background:'#00e676', transform:'translate(-50%,-50%)', zIndex:15
+      });
+      document.body.appendChild(mark);
+      await new Promise(res=>{
+        const samples = []; const t0 = performance.now();
+        (function step(){
+          const now = performance.now();
+          if(irisN.x != null) samples.push([irisN.x, irisN.y]);
+          if(now - t0 < 1500) requestAnimationFrame(step);
+          else{
+            const m = mean2(samples);
+            if(!isNaN(m[0])){ src.push(m); dst.push([t.x, t.y]); }
+            document.body.removeChild(mark); res();
+          }
+        })();
+      });
+    }
+    const sol = lsqAffine(src, dst);
+    if(sol){ A = sol.A; b = sol.b; hasCal = true; saveLS(LS_CAL, {A, b}); }
+  });
 
   faceMesh = new FaceMesh({ locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
   faceMesh.setOptions({ maxNumFaces:1, refineLandmarks:CFG.refine, minDetectionConfidence:CFG.detConf, minTrackingConfidence:CFG.trackConf });
@@ -136,12 +191,17 @@
     let rx=(rC.x-Math.min(R_L.x,R_R.x))/rW, lx=(lC.x-Math.min(L_L.x,L_R.x))/lW;
     let ry=(rC.y-Math.min(R_T.y,R_B.y))/rH, ly=(lC.y-Math.min(L_T.y,L_B.y))/lH;
     let gxN=cl01((rx+lx)/2), gyN=cl01((ry+ly)/2);
+    if(CFG.mirrorInput){ gxN = 1 - gxN; }
     if(CFG.invertX) gxN=1-gxN; if(CFG.invertY) gyN=1-gyN;
     gxN=cl01(0.5+(gxN-0.5)*CFG.gainX); gyN=cl01(0.5+(gyN-0.5)*CFG.gainY);
     irisN.x=gxN; irisN.y=gyN;
 
-    const px = A[0]*irisN.x + A[1]*irisN.y + b[0];
-    const py = A[2]*irisN.x + A[3]*irisN.y + b[1];
+    // Suavizado exponencial
+    if (smoothedGx === null) smoothedGx = gxN; else smoothedGx = CFG.smoothingFactor * smoothedGx + (1 - CFG.smoothingFactor) * gxN;
+    if (smoothedGy === null) smoothedGy = gyN; else smoothedGy = CFG.smoothingFactor * smoothedGy + (1 - CFG.smoothingFactor) * gyN;
+
+    const px = A[0]*smoothedGx + A[1]*smoothedGy + b[0];
+    const py = A[2]*smoothedGx + A[3]*smoothedGy + b[1];
 
     updateCursor(px,py);
     dwellDetect();
