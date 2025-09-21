@@ -88,19 +88,24 @@
   })();
 
   async function startCamera(){
+    debug.textContent = 'Starting camera...';
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       showErr('getUserMedia no soportado');
+      debug.textContent += ' | getUserMedia not supported';
       return;
     }
     if(location.protocol !== 'https:' && location.hostname !== 'localhost'){
       showErr('Requiere HTTPS para cámara');
+      debug.textContent += ' | Not HTTPS';
       return;
     }
+    debug.textContent += ' | Requesting camera...';
     try{
       stream = await navigator.mediaDevices.getUserMedia({
         video:{width:{ideal:CFG.camW},height:{ideal:CFG.camH},frameRate:{ideal:CFG.camFps,max:CFG.camFps},facingMode:'user'},
         audio:false
       });
+      debug.textContent += ' | Got stream';
       video=document.createElement('video');
       video.playsInline=true; video.muted=true; video.autoplay=true;
       video.srcObject=stream;
@@ -108,14 +113,16 @@
         video.style.position='fixed'; video.style.top='0'; video.style.left='0';
         video.style.width='10px'; video.style.height='10px'; video.style.opacity='0.01'; // Minimal but valid for iOS
         document.body.appendChild(video);
+        debug.textContent += ' | Video appended';
       }
       await video.play();
+      debug.textContent += ' | Video playing';
       err.style.display='none';
       requestAnimationFrame(loop);
-    }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); }
+    }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); debug.textContent += ' | Error: ' + e.message; }
   }
   startBtn.addEventListener('click', startCamera, {once:true});
-  if(IS_IOS){ window.addEventListener('touchstart', ()=>startCamera(), {once:true}); }
+  startBtn.addEventListener('touchend', (e) => { e.preventDefault(); startCamera(); }, {once:true});
 
   resetBtn.addEventListener('click', ()=>{ hasCal=false; saveLS(LS_CAL,null); A=[W,0,0,H]; b=[0,0]; });
 
