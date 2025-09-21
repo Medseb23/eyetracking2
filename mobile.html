@@ -103,12 +103,13 @@
       });
       video=document.createElement('video');
       video.playsInline=true; video.muted=true; video.autoplay=true;
-      video.srcObject=stream; await video.play();
+      video.srcObject=stream;
       if(IS_IOS){
         video.style.position='fixed'; video.style.top='0'; video.style.left='0';
-        video.style.width='1px'; video.style.height='1px'; video.style.opacity='0'; // Minimal visibility for iOS
+        video.style.width='10px'; video.style.height='10px'; video.style.opacity='0.01'; // Minimal but valid for iOS
         document.body.appendChild(video);
       }
+      await video.play();
       err.style.display='none';
       requestAnimationFrame(loop);
     }catch(e){ showErr((e.name||'')+' — '+(e.message||e)); }
